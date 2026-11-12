@@ -1,0 +1,582 @@
+# 科研采购与供应商交付智能体系统 · 技术方案
+
+- 交付物：技术方案（md）＋技术方案提示词（md / docx）｜版本：**v1.0 按业务域全部重做**｜日期：2026-11-12｜状态：阶段 0 待确认，不写实现代码
+- 业务域：澄岳研究院「科研采购与供应商交付」｜案例：试剂到了，采购单还没批｜业务编号前缀：`research-procurement-f00 ~ f55`
+- 模板说明：原始提示词中的「青少年科创咨询智能体系统」**只是模板范式**，仅借鉴结构、约束与交付格式；不是系统目标、不是语料来源、不设命名空间
+- 技术方案提示词另见独立文件 `技术方案提示词.md`（纯正文可直接复制提交）与 `技术方案提示词.docx`（Word 版）；本文件第一节是同一内容的阅读备份
+- 输入材料（已全部提供）：`科研采购与供应商交付-现场调研报告.md`、`discovery-report.md` / `.json` / `.csv`、`新建文本文档.txt`（任务 2/3 现状流程与异常路径、任务 3/3 四来源收敛与证据台账、现场调研报告全文）
+
+---
+
+## 一、技术方案提示词（v1.0，可直接复制使用）
+
+```text
+你是一名资深 AI 应用工程师，帮我开发一套面向澄岳研究院「科研采购与供应商交付」的智能体系统（案例：试剂到了，采购单还没批）。
+
+说明：原始模板里的「青少年科创咨询智能体系统」只是本次作业提供的模板范式，仅用于借鉴技术方案与提示词的结构、约束和交付格式，不是本项目的业务域；严禁把它写成系统目标、语料来源或知识库命名空间。
+
+【技术栈（已锁定，严禁替换、严禁扩展）】
+- 语言：Python 3.11+
+- Web 框架：FastAPI
+- 智能体运行框架：Agent Harness（Microsoft Agent Framework，create_harness_agent），负责工具循环、上下文管理、会话持久化与工具审批
+- 知识库：严格两套 —— KB-1 @scene#54「日常开发」工程规范库；KB-2 业务事实库，只服务 research_procurement 一个业务域
+- 大模型：只用国内厂商免费且性能好、支持 function calling、走 OpenAI 兼容端点的模型；主模型用阿里云百炼 Qwen（新用户免费额度、中文与长文本最强），备用用智谱 GLM-4-Flash（官方永久免费、不限量，作永不过期兜底）；严禁接入境外模型
+- 禁止：不引入任何未列出的中间件（向量数据库、缓存、消息队列、任务队列一律不加）；知识库检索用 Python 标准库本地实现
+
+【知识库语料（全部来自已交付材料，必须按证据强度使用）】
+- 语料来源共 7 份：现场调研报告（任务 1/2/3）、discovery-report 三件套（md / json / csv）、任务 2/3 现状流程与异常路径、任务 3/3 四来源收敛与证据台账。
+- 四来源收敛结论为「未收敛」：Buyer 顾明岚 6 条、Operator 林亦舟 6 条角色陈述；Brief 与 Industry 为空、evidenceIds 为空、publicSources 为空；36/36 只说明角色事实采集完整，不等于需求确认或验收通过。
+- 全部业务语料标记 status=unverified、version=未标注、freshness=未标注时间戳；回答须回带证据强度、evidence_ids 与资料版本，不得当作已确认事实；六条分歧原样保留，不抹平。
+- 来源错配禁止：本项目接口现状（三系统、三套标识、15 分钟刷新、断连快照）不能充当 Industry 行业可行性证据。
+- 每篇语料带 doc_id / namespace / source_id / evidence_ids / version / status / permission_tag / freshness / text；回答必须满足审计六要素（业务编号、资料版本、事实引用、建议结果、人工改动、签核人）。
+
+【业务边界】
+按五步 AS-IS 流程（需求申请 → 库存核查 → 比价 → 采购审批 → 到货验收）执行：AI 只做提示与预检，不替代人工判断。转人工四情形（温控记录缺失、资料缺依据、两版本冲突、关键系统不可用）一律暂停建议并标注触发原因／接手人／确认时间；三条红线（危化品资质、冷链验收、预算审批）不可绕过；错误结果不覆盖原记录；触及停止条件暂停试点复盘；断连只用带时间戳的只读快照并标暂未更新。八类只能由人完成的判断（供应商选定与比价结论、危化品／冷链／预算签核、温控缺失后可用性判定、规则版本冲突裁定、接手确认与异常分派升级、争议受理与对外承诺、试点停止／复盘／规则更新、人工改动与签核人确认）一律拒绝并转人工。不可逆动作（自主选定供应商、自动付款、批准危化品采购、改比价结果、触发审批、对外承诺）一律拒绝。
+
+【模型调用与降级】
+主模型限流或超时 → 有限次指数退避 → 切备用国内模型 → 仍失败返回 MODEL_UNAVAILABLE 并转人工；禁止静默降级、禁止用模型编造事实填空。模型只负责组织措辞，事实、evidence_ids、版本、证据强度与 unverified 标记一律由知识库与代码注入，不得让模型自行生成或抹掉。主备 provider、base_url、name 与超时重试参数全部从 config.yaml 读取，密钥只记环境变量名；免费额度到期后把主备对调即可继续用永久免费的 GLM-4-Flash，不改代码。
+
+【编码约束】
+- 每个函数写中文 docstring，说明入参、出参、失败时的行为。
+- 关键业务逻辑（安全审查、权限校验、人工确认）必须写中文行内注释，说明为什么这么卡。
+- 配置文件统一放 config.yaml，禁止把密钥、模型地址写死在代码里；密钥只记录环境变量名。
+- 每行代码必须添加注释。
+- 不自行替换框架，不引入未要求的中间件。
+
+【接口约束】
+所有对外接口返回统一结构：{"ok": bool, "data": ..., "error": {"code": str, "msg": str}}。键集合恒定：成功时 error=null，失败时 data=null、error 为含 code/msg 的对象；错误码必须取自本方案声明的枚举，不得临时拼字符串。
+
+【交付要求】
+每个阶段结束时，给我：① 变更文件清单；② 启动与自测命令；③ 一段能直接跑通的验证脚本；④ 你认为这一阶段最可能出问题的地方。不要给我解释性长文，我要能跑的代码。
+
+【阶段纪律】
+现在先不要动手写代码；用五句话复述你对项目的理解，并列出你打算先做哪三件事，等我确认。确认后按阶段推进，每阶段只交付该阶段的四项产物。
+```
+
+---
+
+## 二、项目理解（五句话）
+
+1. 本项目要开发的是澄岳研究院「科研采购与供应商交付」智能体系统，案例为「试剂到了，采购单还没批」；青少年科创咨询只是作业提供的模板范式，只借用技术方案与提示词的结构、约束和交付格式，不进入业务域。
+2. 当前仍是阶段 0：只交付技术方案、可复用提示词、两套知识库语料与自测脚本，不写实现代码，按提示词的阶段纪律等待确认。
+3. 系统的能力边界由已交付材料直接决定：五步 AS-IS 流程（需求申请→库存核查→比价→采购审批→到货验收）、瓶颈 A/B/C、异常主线与三条旁路、八类只能由人完成的判断，AI 只做提示与预检。
+4. 四来源收敛结论为「未收敛」：Brief 与 Industry 为空、publicSources 为空、四类核实材料一份未取得，因此全部业务语料标记 `status=unverified`，回答必须回带 evidence_ids、资料版本与证据强度，并满足审计六要素，六条分歧原样保留。
+5. 技术栈锁定 Python 3.11+ / FastAPI / Agent Harness / 严格两套知识库 / 国内免费高性能模型；`config.yaml` 统一配置、统一响应结构、中文 docstring、关键逻辑中文行内注释、每行代码加注释，每阶段交付四项产物。
+
+---
+
+## 三、输入材料与证据强度
+
+| # | 来源 | 关键内容 | 证据强度 |
+|---|---|---|---|
+| 1 | `科研采购与供应商交付-现场调研报告.md` | 任务 1 角色访谈（6 类角色 36/36 事实、6 条候选需求、边界与责任）、任务 2 现状流程、任务 3 四来源核对与 13 条待核实问题 | 未核实（仅角色口述） |
+| 2 | `discovery-report.md` | 初始诉求、6 条候选需求 P0/P1、36 条按角色整理的调查证据、访谈记录、四来源核对、方法来源 | 未核实（仅角色口述） |
+| 3 | `discovery-report.json` | coverage 36/36、publicSources 空、gaps 空、methodology.sources 四类、handoff 阶段标记 | 未核实（仅角色口述） |
+| 4 | `discovery-report.csv` | 6 行需求假设，字段：需求假设／优先级／负责人／状态／验收与约束／证据编号／事实内容 | 未核实（仅角色口述） |
+| 5 | `新建文本文档.txt` · 任务 2/3 | AS-IS 五步泳道、瓶颈 A/B/C、异常主线、旁路一/二/三、理想 vs 现场 8 项差异、8 类人工判断 | 未核实（仅角色口述） |
+| 6 | `新建文本文档.txt` · 任务 3/3 | 四来源状态表、收敛表、证据台账 E-01~E-06、问题清单 A/B 组、六条分歧 | 未核实（仅角色口述） |
+| 7 | `新建文本文档.txt` · 现场调研报告全文 | 三个任务的理解与结论全文、仍待核实问题清单 | 未核实（仅角色口述） |
+
+- **四来源结论：未收敛**。Buyer 顾明岚 6 条、Operator 林亦舟 6 条角色陈述；Brief 只有场景开场白且自述「优先环节、验收标准和权限边界尚未确定」；Industry 无可比案例、publicSources 为空；36/36 只说明角色事实采集完整，不等于需求确认或验收通过。
+- **时间／版本／样本三查均不一致**：18 天与急采 27% 无统计周期，冷藏事件只有「周五／次日」粒度，6 周／15 分钟／90 天是计划或暂定值；36 条陈述均未标注资料版本；160 单/月、20 试剂 6 周、18 天整体、n=1 事件四套口径不能互相推算。一致性只在同口径复述层面成立（f12≈f51、f05≈f52、f01≈f20、f40≈f42）。
+- **来源错配禁止**：三系统无统一视图、三套标识、15 分钟刷新与断连快照属本项目接口现状，不能充当 Industry 行业可行性证据。
+- 因此全部业务语料 `status=unverified`、`version=未标注`、`freshness=未标注时间戳`；不得据此修改规则、请求配置，也不把口述当事实写进结论。
+
+---
+
+## 四、业务域更正（v0.2 → v1.0）
+
+| 项 | v0.2（错误，本末倒置） | v1.0（本次全部重来） |
+|---|---|---|
+| 系统目标 | 面向青少年的科创咨询智能体系统 | 澄岳研究院「科研采购与供应商交付」智能体系统 |
+| 科创咨询 | 当作主业务域 | **仅为模板范式参考**，不进语料、不设命名空间、不写进接口 |
+| 业务语料 | 科创为主，科研采购作「第二类语料」 | 科研采购为唯一业务域，36 条事实与全部台账装载 |
+| KB-2 命名空间 | 两个业务域并列，科创域 0 篇 | 仅 `research_procurement`，97 篇 |
+| 模型 | 主 GLM-4.7-Flash、备境外 Gemini 免费层 | 主阿里云百炼 Qwen、备智谱 GLM-4-Flash，**全部国内免费** |
+| 待确认事项 | 反问业务域取舍、索要语料 | 材料已齐，只确认是否进入阶段 1 |
+
+> 科创模板在本方案中只保留三样东西：提示词的分节写法、编码／接口／交付约束、阶段纪律。其余（角色、流程、红线、证据编号）全部取自科研采购材料。
+
+---
+
+## 五、技术栈
+
+| 层 | 选型 | 约束说明 |
+|---|---|---|
+| 语言 | Python 3.11+ | 标准库完成检索、配置解析与自测 |
+| Web | FastAPI | 只做 HTTP 层，业务逻辑下沉到 harness 工具 |
+| 智能体运行框架 | Agent Harness（`agent_framework.create_harness_agent`） | 承担工具循环、上下文压缩、会话持久化、工具审批；审批能力承载「人工确认」卡点 |
+| 知识库 | 严格 2 套 | 不接向量库、缓存、队列；检索用标准库本地实现 |
+| 模型 | 国内免费层、OpenAI 兼容端点 | 主备 provider／base_url／name 全部走 `config.yaml`，密钥只记环境变量名 |
+| 依赖 | `fastapi`、`uvicorn`、`agent-framework`、`PyYAML` | 不新增中间件 |
+
+---
+
+## 六、模型选型（国内免费高性能）
+
+| 角色 | 模型 | 厂商／地区 | 免费依据 | OpenAI 兼容端点 | 理由 |
+|---|---|---|---|---|---|
+| 主模型 | `qwen-plus`（百炼通用名，可按控制台当期免费清单切换） | 阿里云百炼 · 中国 | 新用户每模型 100 万、总额 > 7000 万 token，有效期 90 天 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | 中文理解与长文本最强、支持 function calling、国内直连 |
+| 备用 | `glm-4-flash` | 智谱 BigModel · 中国 | 官方宣布**永久免费、不限总量**，128K 上下文、30 并发、支持 Function Call | `https://open.bigmodel.cn/api/paas/v4/` | 永不过期的兜底，FC 完备；主模型额度到期后把主备对调即可，不改代码 |
+| 候选（不启用） | `deepseek-v4-flash` | 深度求索 · 中国 | 免费层口径冲突（注册赠送 500 万/30 天 vs 无免费层），腾讯云 TokenHub 100 万/90 天 | `https://api.deepseek.com` | 编程与 Agent 能力最强、1M 上下文；免费性待实测，未核实前不进 config |
+| 排除 | 境外厂商免费层 | — | 不符合「国内」约束 | — | 数据出境与合规风险，`allow_overseas: false` 硬开关禁止写入 |
+
+> 选型依据为 2026-11-12 检索的厂商官方页与第三方免费额度清单，**证据强度：待实测**；免费额度随时可能调整，阶段 1 必须用真实请求验证。第三方对「GLM-4.7-Flash 是否免费」存在互相冲突的说法，且智谱有「选错模型名会扣费」的已知坑，故不把它写入默认配置。
+
+**模型调用与降级链**：检索 KB-2 → 拼装只含带证据编号片段的 prompt → 调用主模型 → 安全审查 → 权限校验 → 人工确认 → 统一响应。主模型 429／5xx／超时 → 有限次指数退避 → 切备用国内模型 → 仍失败返回 `MODEL_UNAVAILABLE` 并转人工；`forbid_silent_fallback: true` 禁止静默降级，禁止用模型编造事实填空。模型只负责组织措辞，事实、`evidence_ids`、资料版本、证据强度与 `unverified` 标记一律由知识库与代码注入，不允许模型自行生成或抹掉。
+
+---
+
+## 七、两套知识库
+
+| 编号 | 名称 | 语料文件 | namespace | 文档数 | 说明 |
+|---|---|---|---|---|---|
+| KB-1 | `@scene#54「日常开发」` | `kb/daily_dev/corpus.jsonl` | `engineering` | 12 | 提示词、编码约束、`config.yaml` 键位、统一响应、模型国产化、审计六要素、阶段交付模板 |
+| KB-2 | 科研采购业务事实库 | `kb/business/corpus.jsonl` | `research_procurement` | 97 | 唯一业务域，完整装载已交付的 7 份材料 |
+
+KB-2 语料构成：36 条角色事实（f00~f55，逐条成篇）＋ 7 条材料来源 ＋ 4 条四来源状态 ＋ 5 个流程节点 ＋ 4 条异常路径 ＋ 8 类只能由人完成的判断 ＋ 6 条分歧 ＋ 6 条候选需求 ＋ 6 条证据台账（E-01~E-06）＋ 2 条审计／试点边界 ＋ 13 条待核实问题 = 97 篇。
+
+- 文档结构统一：`doc_id / namespace / source_id / evidence_ids / version / status / permission_tag / freshness / text`；`evidence_ids` 用完整编号（如 `research-procurement-f11`），供审计重建。
+- `permission_tag=restricted` 的语料（危化品、冷链、审批、签核、停止条件、审计留痕）仅对具名角色开放，越权即拒绝。
+- 检索：JSONL + 标准库关键词／BM25 加权打分；低于 `min_confidence` 不输出结论，直接转人工；`research_procurement` 之外不设第二个业务命名空间。
+
+---
+
+## 八、现状流程与异常路径 → 系统边界映射
+
+| 流程节点 / 异常路径 | 证据 | 系统能力 | 是否实现 |
+|---|---|---|---|
+| ① 需求申请（瓶颈 A 规格返工） | f10 / f12 / f51 / f14 | 规格字段必填预检、必填提示、引用回带 | 实现（只读提示） |
+| ② 库存核查（三套标识歧义） | f31 / f33 / f30 | 标识对齐建议，歧义进人工修复队列，不进自动推荐样本 | 实现（提示，不自动合并） |
+| ③ 比价 | f21 / f20 / f24 / f05 / f52 | 只读展示报价与规则版本，冲突附两版本给安全专员 | 实现（不选定供应商） |
+| ④ 采购审批 | f03 / f04 / f40 / f41 / f22 | 红线预检与提示 | 实现（不触碰审批判断） |
+| ⑤ 到货验收（瓶颈 B） | f11 / f13 / f15 / f44 | 温控缺失即暂停建议、显示原记录与待确认字段、草稿暂存与最后同步时间 | 实现（转人工） |
+| 异常主线：事件→转人工→判定→闭环 | f11 / f44 / f15 / f25 / f42 / f54 / f55 | 触发原因／接手人／确认时间三字段留痕 | 实现（转人工链路） |
+| 旁路一 标识歧义 | f31 / f33 | 进人工修复队列 | 实现 |
+| 旁路二 接口中断 | f34 / f35 / f32 | 带时间戳只读快照＋「暂未更新」标记，重连按业务编号去重补齐 | 实现 |
+| 旁路三 退回与升级 | f20 / f25 | 退回保留原因、跨岗写明下一责任人 | 实现（提示，不拍板） |
+| 八类只能由人完成的判断 | f05 / f52 / f40 / f22 / f11 / f24 / f23 / f54 / f42 / f55 / f45 | 一律拒绝并转人工 | **不实现** |
+
+> 瓶颈 A/B 的标注依据「核对投入量」与一次异常事件推断，各节点等待时间尚未分别计量 [f01]，须用 20 个常用试剂近 3 个月单据回放校准后才能进入需求定义。
+
+---
+
+## 九、三道卡、错误码与统一响应
+
+| 卡点 | 触发条件 | 行为 | 为什么这么卡（写进行内注释） |
+|---|---|---|---|
+| 安全审查 | 提示词注入、语料内嵌指令、请求 `restricted` 语料但角色不匹配、借用他人账号 | `SECURITY_BLOCK` | 知识库语料属不可信输入，不剥离指令就会被越权操控 [f41] |
+| 权限校验 | 命中不可逆动作、只读接口被要求写入、自动付款／批准危化品采购／改比价结果／触发审批 | `PERMISSION_DENIED` | 三条红线不可绕过，越权结论无法撤回 [f40][f32] |
+| 人工确认 | 转人工四情形 [f44]、低置信、版本冲突 [f24]、停止条件 [f42]、快照过期 [f35]、证据缺失、争议对外承诺 [f54] | `NEED_HUMAN_CONFIRM` | 错误结果不覆盖原记录，且必须由具名人签核才可继续 [f15][f45] |
+
+| 错误码 | 场景 | 证据 |
+|---|---|---|
+| `SECURITY_BLOCK` | 注入／越权读取 restricted 语料／借用账号 | f41 |
+| `PERMISSION_DENIED` | 不可逆动作、非只读写入 | f05 / f32 / f40 |
+| `NEED_HUMAN_CONFIRM` | 转人工四情形、低置信、停止条件 | f44 / f42 / f15 |
+| `STALE_SNAPSHOT` | 断连或超一个刷新周期 | f34 / f35 |
+| `EVIDENCE_CONFLICT` | 两版本冲突、事实引用对不上 | f24 / f45 |
+| `KB_NOT_FOUND` | 命名空间无命中语料 | — |
+| `MODEL_UNAVAILABLE` | 主模型限流且备用国内模型也不可用 | 待实测 |
+
+统一响应（键集合恒定，成功 `error=null`，失败 `data=null`）：
+
+```json
+{"ok": true,  "data": {"answer": "...", "evidence_ids": ["research-procurement-f11"], "version": "未标注", "status": "unverified", "evidence_strength": "未核实（仅角色口述）"}, "error": null}
+{"ok": false, "data": null, "error": {"code": "NEED_HUMAN_CONFIRM", "msg": "温控记录缺失，转人工确认"}}
+```
+
+---
+
+## 十、config.yaml 键位
+
+```yaml
+# 配置文件统一入口：代码内禁止出现任何密钥与模型地址字面量。
+app:                                # 应用级配置。
+  name: research-procurement-agent  # 应用名称，仅用于日志与响应标识。
+  host: 127.0.0.1                   # 只监听本机，避免未授权外部调用。
+  port: 8000                        # 阶段 1 由 uvicorn 读取的端口。
+models:                             # 模型配置：主备均为国内免费模型。
+  region: cn                        # 服务商地区，限定国内。
+  allow_overseas: false             # 硬开关：禁止把境外模型写进主备。
+  primary:                          # 主模型分支。
+    provider: aliyun-bailian        # 阿里云百炼，国内直连。
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1  # OpenAI 兼容端点，只写在配置里。
+    api_key_env: MODEL_API_KEY      # 只记环境变量名，真实密钥不落代码库。
+    name: qwen-plus                 # 主模型名称，可按控制台免费清单切换。
+    timeout_seconds: 20             # 单次调用超时，防止工具循环被拖死。
+    max_retries: 2                  # 主模型有限次重试，不做无限退避。
+  fallback:                         # 备用模型分支。
+    provider: zhipu-bigmodel        # 智谱 BigModel，国内直连。
+    base_url: https://open.bigmodel.cn/api/paas/v4/  # OpenAI 兼容端点。
+    api_key_env: FALLBACK_API_KEY   # 备用密钥的环境变量名。
+    name: glm-4-flash               # 官方永久免费模型，作永不过期兜底。
+    timeout_seconds: 20             # 单次调用超时。
+    max_retries: 2                  # 备用模型有限次重试。
+  degrade:                          # 降级策略：不引入任何中间件。
+    retry_backoff_seconds: [1, 2, 4]  # 指数退避等待秒数。
+    forbid_silent_fallback: true   # 禁止静默降级，禁止用模型编造事实填空。
+    on_all_failed: MODEL_UNAVAILABLE  # 双模型都失败时返回该错误码并转人工。
+knowledge_bases:                    # 严格两套知识库，不得增加第三套。
+  - id: kb_daily_dev                # 第一套：@scene#54「日常开发」工程规范库。
+    path: ./kb/daily_dev            # 语料目录，12 篇工程规范语料。
+    scene: 54                       # 场景编号，对应 @scene#54。
+    namespace: engineering          # 命名空间，用于权限隔离。
+  - id: kb_business                 # 第二套：科研采购业务事实库。
+    path: ./kb/business             # 语料目录，97 篇业务语料。
+    namespace: research_procurement # 唯一业务域命名空间。
+evidence:                           # 证据强度与审计配置。
+  default_status: unverified        # 业务语料默认未核实，回答须回带该标记。
+  require_version: true             # 每条建议必须回带资料版本，缺版本即转人工。
+  require_citation: true            # 每条建议必须回带 evidence_ids，满足审计六要素。
+guards:                             # 三道卡的阈值与开关。
+  min_confidence: 0.75              # 低于该置信度转人工确认，不输出结论。
+  max_tool_iterations: 8            # harness 工具循环硬上限，防止死循环。
+  snapshot_ttl_minutes: 15          # 只读快照刷新周期，超期标待刷新。
+  require_human_actions:            # 不可逆动作清单，命中即拒绝并转人工。
+    - select_supplier               # 自主选定供应商。
+    - approve_hazardous             # 危化品采购批准。
+    - approve_cold_chain            # 冷链验收签核。
+    - approve_budget                # 预算审批。
+    - auto_payment                  # 自动付款。
+    - modify_quote_result           # 改比价结果。
+    - external_commitment           # 对外承诺结果。
+response:                           # 统一响应约定。
+  keys: [ok, data, error]           # 三个键恒定不变。
+```
+
+---
+
+## 十一、目录与阶段划分
+
+```text
+# 项目目录（阶段 0 已落地前 6 项）。
+C:/Users/mac/Desktop/
+├── 技术方案.md                     # 本方案＋提示词（v1.0 业务域全部重做）。
+├── 技术方案提示词.md               # 独立提示词，纯正文可直接复制提交。
+├── 技术方案提示词.docx             # 同一提示词的 Word 版，可直接提交。
+├── verify_stage0.py                # 阶段 0 自测脚本（五层校验）。
+├── kb/
+│   ├── daily_dev/corpus.jsonl      # KB-1 工程规范语料，12 篇。
+│   └── business/corpus.jsonl       # KB-2 科研采购业务语料，97 篇。
+├── config.yaml                     # 阶段 1 落地，当前不创建。
+├── app/                            # 阶段 1 起落地，当前不创建。
+└── requirements.txt                # 阶段 1 落地，当前不创建。
+```
+
+| 阶段 | 内容 | 结束条件 |
+|---|---|---|
+| 0（本次） | 方案＋提示词＋两套语料＋国内模型配置＋契约自测 | 验证脚本退出码 0 |
+| 1 | `config.yaml`、统一响应、两套知识库检索 | 检索命中并回带 evidence_ids 与版本 |
+| 2 | 三道卡＋harness 编排接入国内免费模型 | 正常／越权／转人工／断连／双模型失败五类用例通过 |
+| 3 | FastAPI 路由、端到端验证脚本、审计六要素落库 | 端到端脚本跑通 |
+
+---
+
+## 十二、阶段 0 交付（四项）
+
+### ① 变更文件清单
+
+| 文件 | 动作 | 说明 |
+|---|---|---|
+| `C:\Users\mac\Desktop\技术方案.md` | 覆盖重写 | **v1.0 按业务域全部重做**：系统目标改为科研采购与供应商交付；新增业务域更正对照、国内免费模型选型与降级链、五层自测 |
+| `C:\Users\mac\Desktop\技术方案提示词.md` | 覆盖重写 | **独立提示词交付物**：首句锁定科研采购业务域，明确科创咨询仅作模板范式参考，纯正文可直接复制提交 |
+| `C:\Users\mac\Desktop\技术方案提示词.docx` | 覆盖重生成 | 同一提示词的 Word 版，可直接提交 |
+| `C:\Users\mac\Desktop\verify_stage0.py` | 覆盖重写 | 自测升级为语料层＋方案层＋模型层＋提示词层＋契约层五层校验 |
+| `C:\Users\mac\Desktop\kb\daily_dev\corpus.jsonl` | 覆盖重写 | KB-1 `@scene#54「日常开发」`，12 篇工程规范语料，版本 v1.0 |
+| `C:\Users\mac\Desktop\kb\business\corpus.jsonl` | 覆盖重写 | KB-2 业务事实库，97 篇：36 条事实＋流程／异常／台账／分歧／需求／问题清单，单一 `research_procurement` 域 |
+
+> 未创建 `config.yaml`、`app/`、`requirements.txt` 等实现文件——按提示词「现在先不要动手写代码」执行。
+
+### ② 启动与自测命令
+
+```bash
+# 阶段 0：无需启动服务，直接跑自测（仅依赖 Python 标准库）。
+python "C:/Users/mac/Desktop/verify_stage0.py"
+# 预期：输出 ok=true 的统一响应，退出码 0。
+# 单独校验两套语料是否为合法 JSONL（可选）。
+python -c "import json,pathlib; [print(p, sum(1 for l in p.read_text(encoding='utf-8').splitlines() if l.strip() and json.loads(l))) for p in [pathlib.Path('C:/Users/mac/Desktop/kb/daily_dev/corpus.jsonl'), pathlib.Path('C:/Users/mac/Desktop/kb/business/corpus.jsonl')]]"
+# 阶段 1（确认后才执行）：安装锁定依赖。
+python -m pip install fastapi uvicorn agent-framework PyYAML
+# 阶段 1 启动 FastAPI 服务。
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+# 阶段 1 冒烟自测。
+curl -s http://127.0.0.1:8000/health
+```
+
+实测输出（本机已跑通，退出码 0）：
+
+```json
+{
+  "ok": true,
+  "data": {
+    "stage": 0,
+    "domain": "科研采购与供应商交付",
+    "plan": "技术方案.md",
+    "kb": ["kb_daily_dev", "kb_business"],
+    "docs": 109,
+    "checks": 59,
+    "models": ["qwen-plus", "glm-4-flash"]
+  },
+  "error": null
+}
+```
+
+### ③ 一段能直接跑通的验证脚本
+
+保存为 `C:\Users\mac\Desktop\verify_stage0.py`（已落盘，内容与下方一致），运行 `python verify_stage0.py`：
+
+```python
+# -*- coding: utf-8 -*-
+# 声明源码编码为 UTF-8，保证 Windows 下中文注释与中文输出不乱码。
+"""阶段 0 自测脚本 v1.0：校验科研采购与供应商交付技术方案、两套知识库语料、国内模型配置与统一响应契约。
+
+入参：无（命令行直接运行；基准目录取脚本所在目录）。
+出参：无返回值；标准输出一条统一结构的 JSON 结果。
+失败时的行为：任一检查未通过即打印 ok=false 的失败响应并以退出码 1 结束，不输出半成品结论。
+"""
+import json  # 导入标准库 json，用于解析 JSONL 语料并序列化统一响应。
+import sys  # 导入标准库 sys，用于校验失败时以非零退出码结束进程。
+from pathlib import Path  # 导入 Path，用于以跨平台绝对路径定位交付文件。
+
+BASE_DIR = Path(__file__).resolve().parent  # 取脚本所在目录为基准，避免依赖当前工作目录。
+PLAN_FILE = BASE_DIR / "技术方案.md"  # 技术方案主交付物的绝对路径。
+PROMPT_FILE = BASE_DIR / "技术方案提示词.md"  # 独立提示词交付物的绝对路径。
+KB_FILES = {  # 两套知识库语料文件路径表，严格两套，不增第三套。
+    "kb_daily_dev": BASE_DIR / "kb" / "daily_dev" / "corpus.jsonl",  # KB-1 @scene#54「日常开发」工程规范库。
+    "kb_business": BASE_DIR / "kb" / "business" / "corpus.jsonl",  # KB-2 科研采购业务事实库。
+}  # 路径表定义结束。
+SECTION_KEYS = ("技术方案提示词", "项目理解", "输入材料", "业务域更正", "技术栈", "模型选型", "两套知识库", "现状流程与异常路径", "三道卡", "config.yaml", "阶段 0 交付")  # 方案必须覆盖的章节关键词。
+RULE_KEYS = ("中文 docstring", "行内注释", "每行代码", "统一响应", "变更文件清单", "启动与自测命令", "验证脚本", "最可能出问题", "人工确认", "status=unverified", "审计六要素", "证据强度", "allow_overseas", "MODEL_UNAVAILABLE", "四来源")  # 提示词必须锁定的约束关键词。
+ERROR_CODES = ("SECURITY_BLOCK", "PERMISSION_DENIED", "NEED_HUMAN_CONFIRM", "STALE_SNAPSHOT", "EVIDENCE_CONFLICT", "KB_NOT_FOUND", "MODEL_UNAVAILABLE")  # 方案必须声明的对外错误码。
+MUST_EVIDENCE = ("research-procurement-f00", "research-procurement-f05", "research-procurement-f11", "research-procurement-f15", "research-procurement-f23", "research-procurement-f24", "research-procurement-f30", "research-procurement-f31", "research-procurement-f33", "research-procurement-f34", "research-procurement-f35", "research-procurement-f40", "research-procurement-f41", "research-procurement-f42", "research-procurement-f44", "research-procurement-f45", "research-procurement-f52", "research-procurement-f53", "research-procurement-f55")  # 语料必须覆盖的关键事实编号。
+DOC_FIELDS = ("doc_id", "namespace", "source_id", "evidence_ids", "version", "status", "permission_tag", "freshness", "text")  # 每篇语料文档的必需字段。
+NAMESPACES = {"engineering", "research_procurement"}  # 两套库内允许的命名空间，业务域只有一个。
+RESPONSE_KEYS = {"ok", "data", "error"}  # 统一响应的固定键集合，任何分支不得增删。
+DOMAIN_NAME = "科研采购与供应商交付"  # 本项目的唯一业务域名称。
+MIN_DOCS = {"kb_daily_dev": 8, "kb_business": 60}  # 两套知识库语料篇数下限，防止材料没被真正装载。
+DOMESTIC_PROVIDERS = ("aliyun-bailian", "zhipu-bigmodel")  # 允许出现的国内服务商白名单。
+DOMESTIC_MODELS = ("qwen-plus", "glm-4-flash")  # 允许作为主备的国内免费模型白名单。
+OVERSEAS_MODELS = ("Gemini", "GPT-", "Claude", "provider: google", "provider: openai")  # config 块内禁止出现的境外模型与服务商痕迹。
+
+
+def build_response(ok, data=None, error=None):  # 定义统一响应构造器，所有对外接口共用它以保证结构恒定。
+    """构造统一响应结构。
+
+    入参：ok（bool，是否成功）、data（任意，成功时的业务数据）、error（dict 或 None，失败时的错误对象）。
+    出参：dict，恒含 ok / data / error 三个键。
+    失败时的行为：ok 不是 bool、或失败分支的 error 不是含 code 与 msg 的 dict 时抛出 ValueError 并终止，绝不返回结构不完整的响应。
+    """  # 函数级中文 docstring，写明入参、出参和失败时的行为。
+    if not isinstance(ok, bool):  # 校验 ok 的类型，防止把字符串误当成布尔值。
+        raise ValueError("ok 必须是 bool")  # 类型不符即抛异常，不让脏数据流入对外接口。
+    if not ok and not (isinstance(error, dict) and "code" in error and "msg" in error):  # 校验失败分支的 error 结构完整性。
+        raise ValueError("失败时 error 必须含 code 与 msg")  # 结构不完整即抛异常，避免前端拿到无法解析的错误。
+    return {"ok": ok, "data": data, "error": error}  # 返回键集合恒定的统一响应对象。
+
+
+def safe_print(text):  # 定义安全打印函数，兼容 Windows 非 UTF-8 控制台。
+    """把文本打印到标准输出。
+
+    入参：text（str，待输出文本）。
+    出参：无返回值。
+    失败时的行为：控制台编码不支持中文时退化为反斜杠转义输出，不抛异常、不中断自测。
+    """  # 函数级中文 docstring，写明入参、出参和失败时的行为。
+    try:  # 先尝试按控制台默认编码直接输出中文。
+        print(text)  # 输出原始文本，保持可读性。
+    except UnicodeEncodeError:  # 捕获中文编码失败，说明控制台不是 UTF-8。
+        print(text.encode("ascii", "backslashreplace").decode("ascii"))  # 退化为转义序列输出，保证脚本仍能跑通。
+
+
+def load_kb():  # 定义语料加载函数，逐行解析两套知识库的 JSONL 文档。
+    """加载并校验两套知识库语料。
+
+    入参：无（读取模块级 KB_FILES / DOC_FIELDS / NAMESPACES / MIN_DOCS）。
+    出参：tuple[list[dict], list[str]]，分别为文档列表与问题列表。
+    失败时的行为：文件缺失、单行 JSON 非法、字段缺失、命名空间越界或篇数不足时记录为问题并继续检查，不抛异常。
+    """  # 函数级中文 docstring，写明入参、出参和失败时的行为。
+    docs = []  # 初始化文档列表，用于汇总两套库的全部语料。
+    problems = []  # 初始化问题列表，用于累积语料层的所有缺陷。
+    for kb_id, path in KB_FILES.items():  # 遍历两套知识库的编号与路径。
+        if not path.is_file():  # 判断语料文件是否真实存在。
+            problems.append(f"缺少知识库语料：{kb_id}")  # 缺文件时记录明确说明并跳过该库。
+            continue  # 继续检查下一套库，不中断整体自测。
+        count = 0  # 初始化该库的有效文档计数。
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):  # 以 UTF-8 逐行读取并保留行号。
+            if not line.strip():  # 判断该行是否为空白行。
+                continue  # 空行不产生文档，直接跳过。
+            try:  # 保护单行 JSON 解析，避免一处坏行中断全量校验。
+                doc = json.loads(line)  # 把一行 JSON 解析为一个语料文档。
+            except json.JSONDecodeError as exc:  # 捕获非法 JSON 异常。
+                problems.append(f"{kb_id} 第 {lineno} 行 JSON 非法：{exc}")  # 记录库名、行号与具体原因。
+                continue  # 跳过坏行，继续检查后续行。
+            count += 1  # 有效行计数加一，用于篇数下限校验。
+            missing = [k for k in DOC_FIELDS if k not in doc]  # 计算该文档缺失的必需字段。
+            if missing:  # 判断是否存在缺字段。
+                problems.append(f"{kb_id} 第 {lineno} 行缺字段：{','.join(missing)}")  # 记录缺失字段清单。
+            if doc.get("namespace") not in NAMESPACES:  # 校验命名空间是否在允许集合内。
+                problems.append(f"{kb_id} 第 {lineno} 行命名空间越界：{doc.get('namespace')}")  # 记录越界问题，防止混入科创模板域。
+            if kb_id == "kb_business" and doc.get("status") != "unverified":  # 业务语料一律必须是未核实状态。
+                problems.append(f"{kb_id} 第 {lineno} 行未标注 status=unverified")  # 记录证据强度标注缺失，防止口述被当事实。
+            docs.append(doc)  # 把文档加入结果列表，供后续证据覆盖检查使用。
+        if count < MIN_DOCS[kb_id]:  # 判断该库装载篇数是否达到下限。
+            problems.append(f"{kb_id} 语料仅 {count} 篇，少于 {MIN_DOCS[kb_id]} 篇")  # 记录篇数不足，说明材料没被完整装载。
+    return docs, problems  # 返回文档列表与问题列表。
+
+
+def check_plan(docs):  # 定义方案检查函数，校验章节、约束、错误码、业务域与证据覆盖。
+    """检查技术方案是否覆盖全部必需内容，并核对业务域口径与语料证据编号。
+
+    入参：docs（list[dict]，load_kb 返回的语料文档列表）。
+    出参：list[str]，缺失项说明；空列表表示通过。
+    失败时的行为：方案文件不存在时返回单条说明，不抛异常，由 main 统一汇总为失败响应。
+    """  # 函数级中文 docstring，写明入参、出参和失败时的行为。
+    if not PLAN_FILE.is_file():  # 判断技术方案文件是否真实存在。
+        return [f"缺少交付文件：{PLAN_FILE.name}"]  # 文件缺失时返回明确说明。
+    text = PLAN_FILE.read_text(encoding="utf-8")  # 以 UTF-8 读取方案全文，避免 Windows 默认编码解码失败。
+    missing = [f"缺少章节：{k}" for k in SECTION_KEYS if k not in text]  # 逐条比对必需章节关键词。
+    missing += [f"缺少约束：{k}" for k in RULE_KEYS if k not in text]  # 逐条比对必需约束关键词。
+    missing += [f"缺少错误码：{c}" for c in ERROR_CODES if c not in text]  # 逐条比对对外错误码声明。
+    if DOMAIN_NAME not in text:  # 校验方案是否锚定正确的业务域。
+        missing.append("方案未锚定科研采购与供应商交付业务域")  # 业务域缺失即判定主次颠倒。
+    body = text.split("```python")[0]  # 剔除方案末尾内嵌的验证脚本，避免把脚本里的禁词字面量当成方案正文残留。
+    if "teen_innovation" in body:  # 校验方案正文是否残留科创咨询命名空间。
+        missing.append("方案正文仍残留科创咨询命名空间")  # 残留即判定模板被误当业务域。
+    if "模板范式" not in text:  # 校验是否明确声明科创只是参考模板。
+        missing.append("方案未声明科创咨询仅作模板范式参考")  # 缺声明即无法防止本末倒置。
+    evidence = {e for d in docs for e in d.get("evidence_ids", [])}  # 汇总语料中出现的全部事实引用编号。
+    missing += [f"语料缺少证据：{e}" for e in MUST_EVIDENCE if e not in evidence]  # 检查关键证据是否被语料覆盖。
+    return missing  # 返回全部缺失项；为空代表方案与语料完整。
+
+
+def check_models():  # 定义模型配置检查函数，校验主备模型全部国产化且配置不落密钥。
+    """校验 config.yaml 键位片段中的模型选型、降级开关与密钥约束。
+
+    入参：无（读取模块级 PLAN_FILE / DOMESTIC_PROVIDERS / DOMESTIC_MODELS / OVERSEAS_MODELS）。
+    出参：list[str]，模型配置违规说明；空列表表示通过。
+    失败时的行为：方案文件缺失或找不到 config 代码块时返回单条说明，不抛异常。
+    """  # 函数级中文 docstring，写明入参、出参和失败时的行为。
+    if not PLAN_FILE.is_file():  # 判断技术方案文件是否真实存在。
+        return [f"缺少交付文件：{PLAN_FILE.name}"]  # 文件缺失时返回明确说明。
+    text = PLAN_FILE.read_text(encoding="utf-8")  # 以 UTF-8 读取方案全文。
+    start = text.find("models:")  # 定位 config.yaml 代码块中 models 段的起点。
+    end = text.find("knowledge_bases:", start)  # 定位 models 段的终点，限定检查范围不误伤正文表格。
+    if start < 0 or end < 0:  # 判断 models 配置块是否完整存在。
+        return ["方案缺少 config.yaml 的 models 配置块"]  # 缺块即无法校验模型国产化。
+    block = text[start:end]  # 截取 models 配置片段，只在该片段内做白名单与黑名单检查。
+    problems = []  # 初始化违规列表，累积所有发现的问题。
+    if "allow_overseas: false" not in block:  # 校验是否硬开关禁止境外模型。
+        problems.append("缺少 allow_overseas: false 硬开关")  # 缺开关即无法保证数据不出境。
+    for provider in DOMESTIC_PROVIDERS:  # 遍历允许出现的国内服务商白名单。
+        if f"provider: {provider}" not in block:  # 判断主备配置是否都落在国内服务商。
+            problems.append(f"config 缺少国内服务商：{provider}")  # 缺服务商即判定主备未全国产化。
+    for name in DOMESTIC_MODELS:  # 遍历允许的国内免费模型名。
+        if f"name: {name}" not in block:  # 判断主备模型名是否落在白名单内。
+            problems.append(f"config 缺少国内免费模型：{name}")  # 缺模型名即判定选型未落地。
+    for bad in OVERSEAS_MODELS:  # 遍历境外模型与服务商黑名单。
+        if bad in block:  # 判断 config 片段内是否残留境外痕迹。
+            problems.append(f"config 残留境外模型或服务商：{bad}")  # 残留即违反国内模型约束。
+    if "sk-" in block:  # 判断 config 片段内是否出现疑似真实密钥字面量。
+        problems.append("config 出现疑似密钥字面量")  # 出现即违反密钥只记环境变量名的约束。
+    if block.count("api_key_env:") < 2:  # 校验主备两条是否都只记录环境变量名。
+        problems.append("主备模型未都使用 api_key_env 记录环境变量名")  # 少于两条即判定密钥配置不全。
+    if "forbid_silent_fallback: true" not in block:  # 校验是否禁止静默降级。
+        problems.append("缺少 forbid_silent_fallback: true")  # 缺开关即可能让模型编造事实填空。
+    if "MODEL_UNAVAILABLE" not in text:  # 校验方案是否声明双模型失败后的错误码。
+        problems.append("方案未声明 MODEL_UNAVAILABLE 降级终态")  # 缺终态即无法转人工。
+    return problems  # 返回全部违规项；为空代表模型配置通过。
+
+
+def check_prompt(plan_text):  # 定义提示词检查函数，校验独立交付物与方案内嵌副本一致且业务域正确。
+    """校验独立提示词文件的业务域、模板限定、纯正文格式与方案内嵌一致性。
+
+    入参：plan_text（str，技术方案全文，用于比对内嵌副本）。
+    出参：list[str]，提示词违规说明；空列表表示通过。
+    失败时的行为：文件不存在时返回单条说明，不抛异常，由 main 统一汇总为失败响应。
+    """  # 函数级中文 docstring，写明入参、出参和失败时的行为。
+    if not PROMPT_FILE.is_file():  # 判断独立提示词文件是否真实存在。
+        return [f"缺少交付文件：{PROMPT_FILE.name}"]  # 文件缺失时返回明确说明。
+    text = PROMPT_FILE.read_text(encoding="utf-8")  # 以 UTF-8 读取独立提示词全文。
+    problems = []  # 初始化违规列表，累积所有发现的问题。
+    lines = text.splitlines()  # 按行切分，便于精确检查首句业务域。
+    first = lines[0] if lines else ""  # 取首句作为系统目标声明。
+    if DOMAIN_NAME not in first:  # 校验首句是否锚定科研采购业务域。
+        problems.append("提示词首句未锚定科研采购与供应商交付")  # 首句错即判定主次颠倒。
+    if "青少年科创咨询智能体系统" in first:  # 校验首句是否误把模板当系统目标。
+        problems.append("提示词首句仍把科创模板当系统目标")  # 首句残留即判定业务域错误。
+    if "模板范式" not in text:  # 校验是否明确限定科创模板的用途。
+        problems.append("提示词未声明科创模板仅作结构范式参考")  # 缺声明即无法防止语料污染。
+    if "teen_innovation" in text:  # 校验提示词是否残留科创命名空间。
+        problems.append("提示词残留 teen_innovation 命名空间")  # 残留即判定存在第二业务域。
+    if "```" in text:  # 校验独立提示词是否为可直接复制的纯正文。
+        problems.append("独立提示词含代码块围栏，不便直接提交")  # 含围栏即不符合纯正文交付要求。
+    for name in ("Qwen", "GLM-4-Flash"):  # 遍历提示词必须点名的国内免费模型。
+        if name not in text:  # 判断是否明确写出国内模型选型。
+            problems.append(f"提示词未锁定国内免费模型：{name}")  # 缺选型即无法保证国产化。
+    if text.strip() not in plan_text:  # 校验方案第一节是否内嵌同一份提示词全文。
+        problems.append("方案第一节未内嵌与独立文件完全一致的提示词")  # 不一致即判定两份交付物脱节。
+    return problems  # 返回全部违规项；为空代表提示词通过。
+
+
+def check_contract():  # 定义契约检查函数，校验成功、失败、转人工三种响应分支。
+    """校验统一响应结构的键集合与 JSON 可序列化性。
+
+    入参：无。
+    出参：list[str]，契约违规说明；空列表表示通过。
+    失败时的行为：构造器抛 ValueError 或序列化失败时把异常文本作为一条违规返回，不中断自测。
+    """  # 函数级中文 docstring，写明入参、出参和失败时的行为。
+    problems = []  # 初始化违规列表，累积所有发现的问题。
+    try:  # 把三种分支的构造与序列化放在同一个保护块内。
+        branches = (  # 定义待校验的三种响应分支。
+            build_response(True, data={"stage": 0}),  # 成功分支：error 应为 None。
+            build_response(False, error={"code": "PLAN_INCOMPLETE", "msg": "方案缺项"}),  # 通用失败分支：data 应为 None。
+            build_response(False, error={"code": "NEED_HUMAN_CONFIRM", "msg": "温控记录缺失，转人工"}),  # 转人工分支：必须带明确错误码。
+        )  # 分支元组定义结束。
+        for resp in branches:  # 遍历三种分支，逐个校验键集合与序列化能力。
+            if set(resp.keys()) != RESPONSE_KEYS:  # 比对键集合是否与约定完全一致。
+                problems.append("响应键集合不是 ok/data/error")  # 键不一致时记录违规。
+            json.dumps(resp, ensure_ascii=False)  # 触发一次序列化，确保响应可被 HTTP 层直接返回。
+    except (ValueError, TypeError) as exc:  # 捕获构造器与序列化抛出的可预期异常。
+        problems.append(f"响应契约异常：{exc}")  # 把异常文本记为一条违规，不吞掉信息。
+    return problems  # 返回全部违规项；为空代表契约通过。
+
+
+def main():  # 定义自测入口，汇总语料、方案、模型、提示词、契约五层检查并输出统一响应。
+    """执行阶段 0 自测并打印结论。
+
+    入参：无。
+    出参：无返回值；标准输出一条统一结构的 JSON。
+    失败时的行为：存在任一缺失或违规时打印 ok=false、error.code=STAGE0_CHECK_FAILED 并以退出码 1 结束。
+    """  # 函数级中文 docstring，写明入参、出参和失败时的行为。
+    plan_text = PLAN_FILE.read_text(encoding="utf-8") if PLAN_FILE.is_file() else ""  # 预读方案全文，供提示词一致性比对。
+    docs, kb_problems = load_kb()  # 先加载两套知识库语料，取得文档与语料层问题。
+    problems = kb_problems + check_plan(docs) + check_models() + check_prompt(plan_text) + check_contract()  # 汇总五层全部问题。
+    if problems:  # 判断是否存在问题，决定输出成功还是失败分支。
+        resp = build_response(False, error={"code": "STAGE0_CHECK_FAILED", "msg": "；".join(problems)})  # 构造带具体缺失项的失败响应。
+        safe_print(json.dumps(resp, ensure_ascii=False, indent=2))  # 打印失败响应，便于直接定位问题。
+        sys.exit(1)  # 以非零退出码结束，便于命令行或 CI 判断自测未通过。
+    checks = len(SECTION_KEYS) + len(RULE_KEYS) + len(ERROR_CODES) + len(MUST_EVIDENCE) + len(DOMESTIC_PROVIDERS) + len(DOMESTIC_MODELS) + 3  # 统计章节、约束、错误码、证据、模型与三分支的检查项规模。
+    resp = build_response(True, data={"stage": 0, "domain": DOMAIN_NAME, "plan": PLAN_FILE.name, "kb": list(KB_FILES), "docs": len(docs), "checks": checks, "models": list(DOMESTIC_MODELS)})  # 构造成功响应，带业务域、两套库与国产模型标识。
+    safe_print(json.dumps(resp, ensure_ascii=False, indent=2))  # 打印成功响应，作为自测通过的凭证。
+
+
+if __name__ == "__main__":  # 仅在脚本被直接运行时执行入口，被导入时不产生副作用。
+    main()  # 调用自测入口，开始校验。
+```
+
+### ④ 这一阶段最可能出问题的地方
+
+| # | 风险 | 影响 | 处理 |
+|---|---|---|---|
+| 1 | 四来源未收敛：Brief 与 Industry 为空、publicSources 为空，制度／日志／单据／观察四类核实材料一份未取得 | 97 篇语料容易被误当作已确认需求 | 全部 `status=unverified`、回带证据强度与版本；六条分歧原样保留；不修改规则、不请求配置 |
+| 2 | 主模型百炼免费额度有有效期（约 90 天），且不同模型名是否免费口径不一 | 额度到期或选错模型名可能产生费用或调用失败 | 备用 `glm-4-flash` 官方永久免费兜底；到期把 config 主备对调，不改代码；阶段 1 实测模型名与额度 |
+| 3 | 第三方对「GLM-4.7-Flash 是否免费」说法冲突，且模型名选错会扣费 | 误把收费模型写进默认配置 | 不写入 config；只列候选，阶段 1 用真实请求核实 |
+| 4 | 异常路径的处理时限、验收排班、试剂可用性判定时限未采集 | `NEED_HUMAN_CONFIRM` 链路无法证明能闭环 | 用历史异常单回放验证「暂停建议—采购核对—安全确认」 |
+| 5 | 时间／版本／样本四套口径并存，18 天各节点耗时未分别计量 | 瓶颈 A/B 归属与 98% 验收口径无法落地 | 用 20 个常用试剂近 3 个月单据回放校准；局部与整体指标先约定换算 |
+| 6 | harness 包名／API 签名与两家国内模型的 OpenAI 兼容端点未实测 | 阶段 2 编排可能跑不通 | 阶段 1 先做最小可跑验证，锁定真实签名与限流行为 |
+| 7 | `@scene#54「日常开发」` 原始知识库未单独提供文件 | KB-1 只能用本方案与提示词沉淀的工程规范占位 | 已按工程约束装载 12 篇；如后续提供原文件，覆盖 KB-1 即可，不影响 KB-2 |
+
+---
+
+## 十三、待确认
+
+材料已全部提供，本阶段不再索要任何补充资料、不修改业务规则、不请求配置。只需确认一件事：**是否同意按本方案进入阶段 1**，开始落地 `config.yaml`、`response.py`、`kb.py` 与两家国内模型的最小可跑验证；确认后按同一四项格式交付下一阶段产物。
